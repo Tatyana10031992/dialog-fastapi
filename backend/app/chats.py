@@ -11,7 +11,7 @@ from app.config import settings
 from app.database import Chat, Message, get_db, utc_now
 from app.polza import PolzaError, polza
 
-router = APIRouter(prefix="api", tags=["chats"])
+router = APIRouter(prefix="/api", tags=["chats"])
 DbSession = Annotated[Session, Depends(get_db)]
 
 class ChatResponse(BaseModel):
@@ -57,27 +57,142 @@ class SendMessageRequest(BaseModel):
         value = value.strip()
 
         if not value:
-             raise ValueError("Сообщение не может быть пустым")
+            raise ValueError("Сообщение не может быть пустым")
 
         return value
 
 class SendMessageResponse(BaseModel):
-     chat: ChatResponse
-     assistant_message: MessageResponse
+    chat: ChatResponse
+    assistant_message: MessageResponse
 
 class ModelResponse(BaseModel):
-     id: str
-     name: str
+    id: str
+    name: str
 
 def required_chat(chat_id: int, user_id: int, db: Session) -> Chat:
-     chat = db.scalar(select(Chat.id == chat_id, Chat.user_id == user_id))
+    chat = db.scalar(select(Chat.id == chat_id, Chat.user_id == user_id))
 
-     if not chat:
-          raise HTTPException(
-               status_code=status.HTTP_404_NOT_FOUND,
-               detail="Чат не найден"
-          )
-     return chat
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Чат не найден"
+        )
+    return chat
+
+@router.get("/models", response_model=list[ModelResponse])
+async def list_models() -> list[dict[str, str]]:
+    try:
+        return await polza.list_models()
+    except PolzaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc)
+
+        )
+@router.get("/chats", response_model=list[ChatResponse])
+async def list_chats(user: CurrentUser, db: DbSession):
+    return list(
+        db.scalar(
+            select (Chat)
+                .where(Chat.user_id == user.id)
+                .order_by(Chat.updated_at.desc())))
+
+@router.post(
+    "/chats",
+    response_model=ChatResponse,
+    status_code=status.HTTP_201_CREATED
+)
+
+def create_chat(
+    payload: CreateChatRequest,
+    user: CurrentUser,
+    db: DbSession
+) -> Chat:
+    chat = Chat(user_id=user.id, title=payload.title)
+    db.add(chat)
+    db.commit()
+    return chat
+
+
+@router.get("/chats/{chat_id}", response_model=ChatDetail)
+def get_chat(chat_id: int, user: CurrentUser, db: Session) -> ChatDetail:
+    chat = required_chat(chat_id, user.id, db)
+    messages = list(
+        db.scalar(
+            select(Message)
+            .where(Message.chat_id == chat.id)
+            .order_by(Message.created_at)
+        )
+    )
+    return ChatDetail(chat=chat, messages=messages)
+
+@router.delete("/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_chat(chat_id: int, user: CurrentUser, db: DbSession):
+    chat = required_chat(chat_id, user.id, db)
+    db.delete(chat)
+    db.commit()
+
+@router.post("/chats/{chat_id}messages", response_model=SendMessageResponse)
+async def send_message(
+    chat_id: int,
+    payload: SendMessageRequest,
+    user: CurrentUser,
+    db: DbSession
+) -> SendMessageResponse:
+    chat = required_chat(chat_id, user.id, db)
+    recent = list(
+        db.scalar(
+            select(Message)
+            .where(Message.chat_id == chat.id)
+            .order_by(Message.created_at)
+            .limit(settings.max_chat_history_messages)
+        )
+    )
+
+    history = [
+        { "role": message.role, "content": message.content }
+        for message in reversed(recent)
+    ]
+
+    history.append({"role": "user", "content": payload.content})
+
+    try:
+        reply = await polza.complete(payload.model_id, history)
+    except PolzaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc)
+        ) from exc
+
+    user_message = Message(
+        chat_id=chat.id,
+        role="user",
+        content=payload.content,
+        model_id=payload.model_id
+    ) 
+
+    assistant_message = Message(
+            chat_id=chat.id,
+            role="assistant",
+            content=reply,
+            model_id=payload.model_id
+        ) 
+
+    if chat.title == "Новый чат":
+        chat.title = payload.content[:60] + ("..." if len(payload.content) > 60 else "")
+
+    chat.updated_at = utc_now()
+    db.add_all((user_message, assistant_message))
+    db.commit()
+
+    return SendMessageResponse(chat=chat, assistant_message=assistant_message)
+
+
+
+
+
+            
+    
                       
 
 
