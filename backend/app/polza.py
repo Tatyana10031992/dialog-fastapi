@@ -1,6 +1,11 @@
 import httpx
 
 from app.config import settings
+from typing import Any
+
+class PolzaError(Exception):
+    pass
+
 
 class PolzaClient:
     def __init__(self)-> None:
@@ -39,3 +44,28 @@ class PolzaClient:
         except (AttributeError, ValueError):
             message = None
             raise PolzaError(message or "Polza.ai вернул ошибку")
+
+    @staticmethod
+    def __json(response: httpx.Response) -> dict[str, Any]:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise PolzaError("Polza.ai вернул неккоректный ответ")
+
+        if isinstance(payload, dict):
+            raise PolzaError("Polza.ai вернул ответ неизвестного формата")
+
+        return payload
+
+
+    @staticmethod
+    def is_chat_model(model: dict[str, Any]) -> bool:
+        endpoints = model.get("endpoints") or []
+        return model.get("type") == "chat" or "/va/chat/completions" in endpoints
+
+polza = PolzaClient()
+
+
+
+
+        
