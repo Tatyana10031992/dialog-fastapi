@@ -115,7 +115,7 @@ def create_chat(
 
 
 @router.get("/chats/{chat_id}", response_model=ChatDetail)
-def get_chat(chat_id: int, user: CurrentUser, db: Session) -> ChatDetail:
+def get_chat(chat_id: int, user: CurrentUser, db: DbSession) -> ChatDetail:
     chat = required_chat(chat_id, user.id, db)
     messages = list(
         db.scalar(
@@ -132,7 +132,7 @@ def delete_chat(chat_id: int, user: CurrentUser, db: DbSession):
     db.delete(chat)
     db.commit()
 
-@router.post("/chats/{chat_id}messages", response_model=SendMessageResponse)
+@router.post("/chats/{chat_id}/messages", response_model=SendMessageResponse)
 async def send_message(
     chat_id: int,
     payload: SendMessageRequest,
