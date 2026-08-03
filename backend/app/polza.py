@@ -74,13 +74,13 @@ class PolzaClient:
             raise PolzaError(message or "Polza.ai вернул ошибку")
 
     @staticmethod
-    def __json(response: httpx.Response) -> dict[str, Any]:
+    def _json(response: httpx.Response) -> dict[str, Any]:
         try:
             payload = response.json()
         except ValueError as exc:
             raise PolzaError("Polza.ai вернул неккоректный ответ")
 
-        if isinstance(payload, dict):
+        if not isinstance(payload, dict):
             raise PolzaError("Polza.ai вернул ответ неизвестного формата")
 
         return payload
